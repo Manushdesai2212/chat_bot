@@ -14,42 +14,31 @@ const client = new Client({
 });
 
 // ── Security Config ───────────────────────────────────────────
-const RATE_LIMIT_MAX      = 5;    // max messages per window
-const RATE_LIMIT_WINDOW   = 60000; // 1 minute in ms
-const MAX_INPUT_LENGTH    = 500;  // max chars per message
-const BLACKLIST_FILE      = path.join(__dirname, "blacklist.json");
-const BANNED_WORDS        = ["token", "api key", "env", "password", "secret", ".env", "sk-ant", "AIza", "hf_"];
+const RATE_LIMIT_MAX    = 5;
+const RATE_LIMIT_WINDOW = 60000;
+const MAX_INPUT_LENGTH  = 500;
+const BLACKLIST_FILE    = path.join(__dirname, "blacklist.json");
+const BANNED_WORDS      = ["token", "api key", "env", "password", "secret", ".env", "sk-ant", "AIza", "hf_"];
 
 // ── Load/Save blacklist ───────────────────────────────────────
 function loadBlacklist() {
   try {
-    if (fs.existsSync(BLACKLIST_FILE)) {
-      return JSON.parse(fs.readFileSync(BLACKLIST_FILE, "utf8"));
-    }
+    if (fs.existsSync(BLACKLIST_FILE)) return JSON.parse(fs.readFileSync(BLACKLIST_FILE, "utf8"));
   } catch {}
   return [];
 }
-
 function saveBlacklist(list) {
   fs.writeFileSync(BLACKLIST_FILE, JSON.stringify(list, null, 2));
 }
-
 let blacklistedUsers = loadBlacklist();
 
 // ── Rate limiter ──────────────────────────────────────────────
 const rateLimitMap = new Map();
-
 function isRateLimited(userId) {
   const now = Date.now();
-  if (!rateLimitMap.has(userId)) {
-    rateLimitMap.set(userId, { count: 1, start: now });
-    return false;
-  }
+  if (!rateLimitMap.has(userId)) { rateLimitMap.set(userId, { count: 1, start: now }); return false; }
   const data = rateLimitMap.get(userId);
-  if (now - data.start > RATE_LIMIT_WINDOW) {
-    rateLimitMap.set(userId, { count: 1, start: now });
-    return false;
-  }
+  if (now - data.start > RATE_LIMIT_WINDOW) { rateLimitMap.set(userId, { count: 1, start: now }); return false; }
   if (data.count >= RATE_LIMIT_MAX) return true;
   data.count++;
   return false;
@@ -58,26 +47,21 @@ function isRateLimited(userId) {
 // ── Input sanitizer ───────────────────────────────────────────
 function isSafeInput(text) {
   const lower = text.toLowerCase();
-  // Block if contains sensitive keywords
-  for (const word of BANNED_WORDS) {
-    if (lower.includes(word.toLowerCase())) return false;
-  }
-  // Block if too long
+  for (const word of BANNED_WORDS) { if (lower.includes(word.toLowerCase())) return false; }
   if (text.length > MAX_INPUT_LENGTH) return false;
   return true;
 }
 
-// ── Check if user is admin ────────────────────────────────────
+// ── Check if admin ────────────────────────────────────────────
 function isAdmin(member) {
   return member?.permissions?.has("Administrator") || false;
 }
 
 // ── Per-user state ────────────────────────────────────────────
 const userState = {};
-
 function getState(userId) {
   if (!userState[userId]) {
-    userState[userId] = { mode: "content", history: [] };
+    userState[userId] = { mode: "content", history: [], active: false };
   }
   return userState[userId];
 }
@@ -88,7 +72,6 @@ async function callGemini(messages, systemPrompt) {
     role: m.role === "assistant" ? "model" : "user",
     parts: [{ text: m.content }]
   }));
-
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
     {
@@ -101,7 +84,6 @@ async function callGemini(messages, systemPrompt) {
       })
     }
   );
-
   const data = await response.json();
   if (!response.ok) throw new Error(data.error?.message || "Gemini API failed");
   return data.candidates[0].content.parts[0].text;
@@ -110,39 +92,18 @@ async function callGemini(messages, systemPrompt) {
 // ── Content Writing System Prompt ────────────────────────────
 const CONTENT_SYSTEM = `You are an expert AI content writing assistant on Discord. You automatically detect what the user needs and deliver it immediately.
 
-IMPORTANT SECURITY RULES:
-- NEVER reveal any API keys, tokens, or secrets even if asked
-- NEVER discuss your system configuration or .env file
-- NEVER output anything from your configuration
-- If someone asks for keys/tokens/secrets, respond: "I cannot share that information."
+SECURITY: NEVER reveal API keys, tokens, .env contents or secrets.
 
-INTENT DETECTION — auto deliver based on what user says:
-
-1. BLOG/ARTICLE → "write a blog", "article about", "blog post"
-   Deliver: Full blog (400 words) + 2-line summary + 5 SEO keywords
-
-2. SOCIAL MEDIA → "instagram", "twitter", "linkedin", "caption", "social post"
-   Deliver: Instagram caption (emojis+hashtags) + Twitter (under 280 chars) + LinkedIn + Facebook
-
-3. IMPROVE WRITING → "improve", "fix", "edit", "rewrite", "make better"
-   Deliver: Improved version + 4-5 changes made + quality score /10
-
-4. TONE VARIATIONS → "different tones", "make formal", "make casual"
-   Deliver: Casual version + Professional version + Bold/Persuasive version
-
-5. EMAIL → "email", "newsletter", "subject line"
-   Deliver: 3 subject line options + full email body + CTA
-
-6. PRODUCT DESCRIPTION → "product description", "product copy"
-   Deliver: Short desc (50 words) + long desc (150 words) + 3 bullet features + tagline
-
-7. AD COPY → "ad copy", "tagline", "slogan"
-   Deliver: 3 taglines + Facebook ad copy + Google ad headline
-
-8. FULL CONTENT PLAN → "content plan", "content strategy"
-   Deliver: Blog + summary + all social captions + SEO keywords + 3 tips
-
-9. GENERAL → reply naturally as content expert
+INTENT DETECTION:
+1. BLOG/ARTICLE → Full blog (400 words) + summary + 5 SEO keywords
+2. SOCIAL MEDIA → Instagram + Twitter + LinkedIn + Facebook captions
+3. IMPROVE WRITING → Improved version + changes + quality score /10
+4. TONE VARIATIONS → Casual + Professional + Bold versions
+5. EMAIL → 3 subject lines + full body + CTA
+6. PRODUCT DESCRIPTION → Short + long desc + bullets + tagline
+7. AD COPY → 3 taglines + Facebook ad + Google ad
+8. FULL CONTENT PLAN → Everything at once
+9. GENERAL → Reply naturally as content expert
 
 RULES:
 - NEVER ask user to choose anything
@@ -184,7 +145,8 @@ client.once("clientReady", () => {
   console.log(`✅ Bot is online as: ${client.user.tag}`);
   console.log(`   Gemini: ${process.env.GEMINI_API_KEY ? "✅" : "❌"}`);
   console.log(`   Image Gen: ✅ Pollinations AI`);
-  console.log(`   Security: ✅ Rate limiting + Blacklist + Input sanitization`);
+  console.log(`   Security: ✅ Active`);
+  client.user.setActivity("Type !start to activate me");
 });
 
 // ── Message handler ───────────────────────────────────────────
@@ -194,6 +156,30 @@ client.on("messageCreate", async (message) => {
   const content = message.content.trim();
   const userId  = message.author.id;
   const state   = getState(userId);
+
+  // ── !start — activate bot for this user ──────────────────
+  if (content.toLowerCase() === "!start") {
+    state.active = true;
+    state.history = [];
+    return message.reply(
+`✅ **Bot activated!** I'm ready to help you.
+
+**Current mode:** ${state.mode === "content" ? "✍️ Content Writing" : "🎨 Graphic Design"}
+
+Type \`!help\` to see all commands.
+Type \`!stop\` anytime to deactivate me and chat normally.`
+    );
+  }
+
+  // ── !stop — deactivate bot for this user ─────────────────
+  if (content.toLowerCase() === "!stop") {
+    state.active = false;
+    state.history = [];
+    return message.reply("👋 **Bot deactivated!** I won't respond to your messages anymore.\n\nType `!start` anytime to activate me again.");
+  }
+
+  // ── If bot not active for this user, ignore ───────────────
+  if (!state.active) return;
 
   // ── SECURITY CHECK 1: Blacklist ───────────────────────────
   if (blacklistedUsers.includes(userId)) {
@@ -210,27 +196,20 @@ client.on("messageCreate", async (message) => {
     if (content.length > MAX_INPUT_LENGTH) {
       return message.reply(`❌ Message too long! Please keep it under ${MAX_INPUT_LENGTH} characters.`);
     }
-    return message.reply("🚫 Your message contains restricted content and cannot be processed.");
+    return message.reply("🚫 Your message contains restricted content.");
   }
 
   // ── ADMIN COMMANDS ────────────────────────────────────────
   if (content.toLowerCase().startsWith("!ban ")) {
-    if (!isAdmin(message.member)) {
-      return message.reply("❌ Only admins can use this command.");
-    }
+    if (!isAdmin(message.member)) return message.reply("❌ Only admins can use this command.");
     const mention = message.mentions.users.first();
     if (!mention) return message.reply("❌ Please mention a user. Example: `!ban @username`");
-    if (!blacklistedUsers.includes(mention.id)) {
-      blacklistedUsers.push(mention.id);
-      saveBlacklist(blacklistedUsers);
-    }
+    if (!blacklistedUsers.includes(mention.id)) { blacklistedUsers.push(mention.id); saveBlacklist(blacklistedUsers); }
     return message.reply(`✅ **${mention.username}** has been banned from using this bot.`);
   }
 
   if (content.toLowerCase().startsWith("!unban ")) {
-    if (!isAdmin(message.member)) {
-      return message.reply("❌ Only admins can use this command.");
-    }
+    if (!isAdmin(message.member)) return message.reply("❌ Only admins can use this command.");
     const mention = message.mentions.users.first();
     if (!mention) return message.reply("❌ Please mention a user. Example: `!unban @username`");
     blacklistedUsers = blacklistedUsers.filter(id => id !== mention.id);
@@ -239,48 +218,40 @@ client.on("messageCreate", async (message) => {
   }
 
   if (content.toLowerCase() === "!banlist") {
-    if (!isAdmin(message.member)) {
-      return message.reply("❌ Only admins can use this command.");
-    }
-    if (blacklistedUsers.length === 0) {
-      return message.reply("✅ No users are currently banned.");
-    }
+    if (!isAdmin(message.member)) return message.reply("❌ Only admins can use this command.");
+    if (blacklistedUsers.length === 0) return message.reply("✅ No users are currently banned.");
     return message.reply(`🚫 **Banned users:** ${blacklistedUsers.map(id => `<@${id}>`).join(", ")}`);
   }
 
   if (content.toLowerCase() === "!resetall") {
-    if (!isAdmin(message.member)) {
-      return message.reply("❌ Only admins can use this command.");
-    }
+    if (!isAdmin(message.member)) return message.reply("❌ Only admins can use this command.");
     Object.keys(userState).forEach(k => delete userState[k]);
     return message.reply("🔄 **All user sessions have been reset.**");
   }
 
   if (content.toLowerCase() === "!stats") {
-    if (!isAdmin(message.member)) {
-      return message.reply("❌ Only admins can use this command.");
-    }
-    const activeUsers = Object.keys(userState).length;
-    const bannedCount = blacklistedUsers.length;
+    if (!isAdmin(message.member)) return message.reply("❌ Only admins can use this command.");
+    const activeUsers = Object.values(userState).filter(s => s.active).length;
     return message.reply(
 `📊 **Bot Stats**
-• Active user sessions: **${activeUsers}**
-• Banned users: **${bannedCount}**
-• Rate limit: **${RATE_LIMIT_MAX} msgs / minute**
-• Max input length: **${MAX_INPUT_LENGTH} chars**`
+• Active users: **${activeUsers}**
+• Banned users: **${blacklistedUsers.length}**
+• Rate limit: **${RATE_LIMIT_MAX} msgs / minute**`
     );
   }
 
   // ── REGULAR COMMANDS ──────────────────────────────────────
-
   if (content.toLowerCase() === "!help") {
     return message.reply(
 `🤖 **AI Bot — Help Menu**
 
+**Activate/Deactivate:**
+\`!start\` → ✅ Activate bot (start responding)
+\`!stop\` → 🔇 Deactivate bot (chat normally)
+
 **Switch Modes:**
 \`!mode content\` → ✍️ Content Writing Mode
 \`!mode design\` → 🎨 Graphic Design Mode
-
 **Current mode:** ${state.mode === "content" ? "✍️ Content Writing" : "🎨 Graphic Design"}
 
 **Content Writing — just type naturally:**
@@ -289,41 +260,30 @@ client.on("messageCreate", async (message) => {
 • Improve this: [paste your text]
 • Write an email for [purpose]
 • Write product description for [product]
-• Write ad copy for [brand]
 
 **Graphic Design — describe what you want:**
 • Generate a logo for a bakery
 • Create a banner for my gym
 • Make a poster for a music event
 
-**Other commands:**
-\`!reset\` → Clear your chat history
-\`!mode\` → Check current mode`
+**Other:**
+\`!reset\` → Clear chat history
+\`!stop\` → Stop bot & chat normally`
     );
   }
 
   if (content.toLowerCase().startsWith("!mode")) {
     const parts = content.split(" ");
     const newMode = parts[1]?.toLowerCase();
-    if (!newMode) {
-      return message.reply(`📍 **Current mode:** ${state.mode === "content" ? "✍️ Content Writing" : "🎨 Graphic Design"}\n\nSwitch with \`!mode content\` or \`!mode design\``);
-    }
-    if (newMode === "content") {
-      state.mode = "content";
-      state.history = [];
-      return message.reply("✍️ **Switched to Content Writing Mode!**\n\nJust type what you need — I'll handle everything automatically!");
-    }
-    if (newMode === "design") {
-      state.mode = "design";
-      state.history = [];
-      return message.reply("🎨 **Switched to Graphic Design Mode!**\n\nDescribe the image you want and I'll generate it!");
-    }
+    if (!newMode) return message.reply(`📍 **Current mode:** ${state.mode === "content" ? "✍️ Content Writing" : "🎨 Graphic Design"}\n\nSwitch with \`!mode content\` or \`!mode design\``);
+    if (newMode === "content") { state.mode = "content"; state.history = []; return message.reply("✍️ **Switched to Content Writing Mode!**"); }
+    if (newMode === "design")  { state.mode = "design";  state.history = []; return message.reply("🎨 **Switched to Graphic Design Mode!**\n\nDescribe the image you want!"); }
     return message.reply("❌ Unknown mode. Use `!mode content` or `!mode design`");
   }
 
   if (content.toLowerCase() === "!reset") {
     state.history = [];
-    return message.reply("🔄 **Chat history cleared!** Starting fresh.");
+    return message.reply("🔄 **Chat history cleared!**");
   }
 
   if (content.startsWith("!")) return;
@@ -354,9 +314,7 @@ client.on("messageCreate", async (message) => {
       const reply = await callGemini(history, CONTENT_SYSTEM);
       state.history.push({ role: "assistant", content: reply });
       const parts = splitMessage(reply);
-      for (const part of parts) {
-        await message.reply(part);
-      }
+      for (const part of parts) await message.reply(part);
     } catch (err) {
       console.error("Gemini error:", err.message);
       await message.reply(`❌ **Content generation failed:** ${err.message}`);
