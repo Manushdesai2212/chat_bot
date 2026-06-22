@@ -1,0 +1,15 @@
+{
+  "name": "discord-ai-bot",
+  "version": "1.0.0",
+  "description": "Discord Bot with Content Writing + Image Generation",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.3.1",
+    "@anthropic-ai/sdk": "^0.24.0",
+    "@google/generative-ai": "^0.21.0"
+  }
+}

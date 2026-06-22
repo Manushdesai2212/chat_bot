@@ -1,0 +1,22 @@
+# Secret keys - NEVER upload these
+.env
+.env.local
+.env.backup
+
+# Bot data files
+blacklist.json
+
+# Node modules
+node_modules/
+package-lock.json
+
+# Mac system files
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+
+# Runtime files
+pids
+*.pid
